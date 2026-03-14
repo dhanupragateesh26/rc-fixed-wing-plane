@@ -1,0 +1,85 @@
+#include <Arduino.h>
+#include <ESP32Servo.h>
+#include <HardwareSerial.h>
+#include <AlfredoCRSF.h>
+
+// --- Pin Definitions ---
+#define RX_PIN 16
+#define TX_PIN 17
+
+// Servo & ESC Pins
+#define SERVO_1_PIN 12 // Channel 1 (Roll/Aileron)
+#define SERVO_2_PIN 13 // Channel 2 (Pitch/Elevator)
+#define SERVO_3_PIN 14 // Channel 3 (Throttle/ESC)
+#define SERVO_4_PIN 15 // Channel 4 (Yaw/Rudder)
+
+// --- Object Initialization ---
+HardwareSerial crsfSerial(2);
+AlfredoCRSF crsf;
+
+Servo servo1;
+Servo servo2;
+Servo servo3;
+Servo servo4;
+
+void setup() {
+  Serial.begin(115200);
+
+  // Initialize CRSF serial connection
+  crsfSerial.begin(CRSF_BAUDRATE, SERIAL_8N1, RX_PIN, TX_PIN);
+  crsf.begin(crsfSerial);
+
+  // Allocate hardware timers for ESP32 PWM
+  ESP32PWM::allocateTimer(0);
+  ESP32PWM::allocateTimer(1);
+  ESP32PWM::allocateTimer(2);
+  ESP32PWM::allocateTimer(3);
+
+  // Attach servos/ESC to their respective pins
+  servo1.attach(SERVO_1_PIN);
+  servo2.attach(SERVO_2_PIN);
+  servo3.attach(SERVO_3_PIN);
+  servo4.attach(SERVO_4_PIN);
+
+  Serial.println("ESP32 ELRS Airplane Ready. Waiting for Arm...");
+}
+
+void loop() {
+  // Process incoming CRSF packets
+  crsf.update();
+
+  // 1. FAILSAFE & ARMING LOGIC
+  // Channel 5 is AUX 1 on your radio. ELRS sends this as a 2-position switch (usually ~1000 or ~2000).
+  int armSwitch = crsf.getChannel(5); 
+
+  if (!crsf.isLinkUp() || armSwitch < 1500) {
+    // DISARMED OR LINK LOST
+    // We replace stopMotors() with proper airplane failsafe values.
+    servo1.writeMicroseconds(1500); // Center Aileron
+    servo2.writeMicroseconds(1500); // Center Elevator
+    servo3.writeMicroseconds(1000); // THROTTLE CUT (Crucial for safety!)
+    servo4.writeMicroseconds(1500); // Center Rudder
+    
+    // Return early so the rest of the loop doesn't process stick inputs
+    return; 
+  }
+
+  // 2. NORMAL OPERATION (ARMED)
+  // If the code gets past the return statement above, the plane is armed.
+  int ch1 = crsf.getChannel(1);
+  int ch2 = crsf.getChannel(2);
+  int ch3 = crsf.getChannel(3);
+  int ch4 = crsf.getChannel(4);
+
+  // Constrain values to strictly 1000 - 2000
+  ch1 = constrain(ch1, 1000, 2000);
+  ch2 = constrain(ch2, 1000, 2000);
+  ch3 = constrain(ch3, 1000, 2000);
+  ch4 = constrain(ch4, 1000, 2000);
+
+  // Write values to the servos and ESC
+  servo1.writeMicroseconds(ch1);
+  servo2.writeMicroseconds(ch2);
+  servo3.writeMicroseconds(ch3);
+  servo4.writeMicroseconds(ch4);
+}
